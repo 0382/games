@@ -461,9 +461,6 @@ using mat2x2d = mat2x2<double>;
 using mat3x3d = mat3x3<double>;
 using mat4x4d = mat4x4<double>;
 
-using rgb = vec3<uint8_t>;
-using rgba = vec4<uint8_t>;
-
 template <scalar T, std::size_t N>
 std::ostream &operator<<(std::ostream &os, const fixed_vec<T, N> &v)
 {

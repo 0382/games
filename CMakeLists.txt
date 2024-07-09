@@ -7,11 +7,15 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 
+add_executable(main main.cpp)
+target_include_directories(main PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+
 add_executable(test test.cpp)
 target_include_directories(test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 set(examples
     doublependulum
+    game_of_life
 )
 
 foreach(example ${examples})

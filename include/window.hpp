@@ -12,12 +12,22 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
+#include <fstream>
 #include <mutex>
+
+namespace games
+{
 
 class Application
 {
   private:
     bool m_debug;
+
+    Application(const Application &) = delete;
+    Application &operator=(const Application &) = delete;
+    Application(Application &&) = delete;
+    Application &operator=(Application &&) = delete;
 
   public:
     Application(bool debug = false)
@@ -26,10 +36,10 @@ class Application
         if (m_debug)
         {
             ::AllocConsole();
-            std::FILE *pfStdOut = nullptr;
-            std::FILE *pfStdIn = nullptr;
-            ::freopen_s(&pfStdOut, "CONOUT$", "w", stdout);
-            ::freopen_s(&pfStdIn, "CONIN$", "r", stdin);
+            std::FILE *fout = nullptr;
+            std::FILE *fin = nullptr;
+            ::freopen_s(&fout, "CONOUT$", "w", stdout);
+            ::freopen_s(&fin, "CONIN$", "r", stdin);
         }
     }
     ~Application()
@@ -37,6 +47,8 @@ class Application
         if (m_debug)
         {
             ::FreeConsole();
+            ::fclose(stdout);
+            ::fclose(stdin);
         }
     }
 
@@ -55,8 +67,8 @@ class RawCanvas
 {
   private:
     BITMAPINFO m_bmi;
-    uint8_t *m_bits;
-    uint8_t *m_bits2;
+    uint8_t *m_pixels;
+    uint8_t *m_pixels_show;
     int m_width;
     int m_height;
     std::mutex m_mtx;
@@ -75,29 +87,40 @@ class RawCanvas
         m_bmi.bmiHeader.biYPelsPerMeter = 0;
         m_bmi.bmiHeader.biClrUsed = 0;
         m_bmi.bmiHeader.biClrImportant = 0;
-        m_bits = new uint8_t[3 * width * height];
-        m_bits2 = new uint8_t[3 * width * height];
+        m_pixels = new uint8_t[3 * width * height];
+        m_pixels_show = new uint8_t[3 * width * height];
     }
 
     ~RawCanvas()
     {
-        delete[] m_bits;
-        delete[] m_bits2;
+        delete[] m_pixels;
+        delete[] m_pixels_show;
+    }
+
+    uint8_t *raw_pixel(int x, int y) { return m_pixels + 3 * (y * m_width + x); }
+    const uint8_t *raw_pixel(int x, int y) const { return m_pixels + 3 * (y * m_width + x); }
+
+    void get_pixel(int x, int y, uint8_t &r, uint8_t &g, uint8_t &b) const
+    {
+        const uint8_t *p = raw_pixel(x, y);
+        b = p[0];
+        g = p[1];
+        r = p[2];
     }
 
     void set_pixel(int x, int y, uint8_t r, uint8_t g, uint8_t b)
     {
-        auto p = m_bits + 3 * (y * m_width + x);
+        uint8_t *p = raw_pixel(x, y);
         p[0] = b;
         p[1] = g;
         p[2] = r;
     }
 
-    void clear(uint8_t r, uint8_t g, uint8_t b)
+    void fill(uint8_t r, uint8_t g, uint8_t b)
     {
         for (int i = 0; i < m_width * m_height; ++i)
         {
-            auto p = m_bits + 3 * i;
+            uint8_t *p = m_pixels + 3 * i;
             p[0] = b;
             p[1] = g;
             p[2] = r;
@@ -106,19 +129,40 @@ class RawCanvas
 
     int width() const { return m_width; }
     int height() const { return m_height; }
+    void save_bmp(const char *fname) const
+    {
+        BITMAPFILEHEADER bfh;
+        bfh.bfType = 0x4d42;
+        bfh.bfSize = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER) + 3 * m_width * m_height;
+        bfh.bfReserved1 = 0;
+        bfh.bfReserved2 = 0;
+        bfh.bfOffBits = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
+        std::ofstream fp(fname, std::ios::binary);
+        fp.write(reinterpret_cast<const char *>(&bfh), sizeof(BITMAPFILEHEADER));
+        fp.write(reinterpret_cast<const char *>(&m_bmi.bmiHeader), sizeof(BITMAPINFOHEADER));
+        fp.write(reinterpret_cast<const char *>(m_pixels), 3 * m_width * m_height);
+    }
 
     void beginpaint() {}
 
     void endpaint()
     {
         std::lock_guard<std::mutex> lock(m_mtx);
-        std::memcpy(m_bits2, m_bits, 3 * m_width * m_height);
+        std::memcpy(m_pixels_show, m_pixels, 3 * m_width * m_height);
     }
 
     void to_dc(HDC hdc, int width, int height)
     {
         std::lock_guard<std::mutex> lock(m_mtx);
-        ::StretchDIBits(hdc, 0, 0, width, height, 0, 0, m_width, m_height, m_bits2, &m_bmi, DIB_RGB_COLORS, SRCCOPY);
+        if (width == m_width && height == m_height)
+        {
+            ::SetDIBitsToDevice(hdc, 0, 0, width, height, 0, 0, 0, m_height, m_pixels_show, &m_bmi, DIB_RGB_COLORS);
+        }
+        else
+        {
+            ::StretchDIBits(hdc, 0, 0, width, height, 0, 0, m_width, m_height, m_pixels_show, &m_bmi, DIB_RGB_COLORS,
+                            SRCCOPY);
+        }
     }
 };
 
@@ -200,12 +244,15 @@ struct SizePolicy
     int m_maxHeight;
     double m_aspectRatio;
     static SizePolicy fixed(int width, int height) { return {width, width, height, height, 0.0}; }
-    static SizePolicy ratio(double aspectRatio) { return {0, INT_MAX, 0, INT_MAX, aspectRatio}; }
+    static SizePolicy ratio(double aspectRatio)
+    {
+        return {0, std::numeric_limits<int>::max(), 0, std::numeric_limits<int>::max(), aspectRatio};
+    }
     static SizePolicy minmax(int minWidth, int maxWidth, int minHeight, int maxHeight)
     {
         return {minWidth, maxWidth, minHeight, maxHeight, 0.0};
     }
-    static SizePolicy any() { return {0, INT_MAX, 0, INT_MAX, 0.0}; }
+    static SizePolicy any() { return {0, std::numeric_limits<int>::max(), 0, std::numeric_limits<int>::max(), 0.0}; }
     bool compatible(int width, int height) const
     {
         if (m_aspectRatio > 0.0)
@@ -227,8 +274,6 @@ class MainWindow : public BaseWindow<MainWindow>
     RawCanvas &m_canvas;
     int m_fps = 0;
 
-    BOOL invalidate() { return ::InvalidateRect(m_hwnd, nullptr, FALSE); }
-
   public:
     MainWindow(SizePolicy policy, RawCanvas &canvas, int fps) : m_size_policy(policy), m_canvas(canvas), m_fps(fps) {}
     bool init(const wchar_t *title, int width, int height)
@@ -238,7 +283,8 @@ class MainWindow : public BaseWindow<MainWindow>
         return false;
     }
     PCWSTR classname() const override { return L"MainWindow"; }
-    BOOL show(int nCmdShow) { return ::ShowWindow(m_hwnd, nCmdShow); }
+    BOOL show(int nCmdShow = SW_NORMAL) { return ::ShowWindow(m_hwnd, nCmdShow); }
+    BOOL invalidate() { return ::InvalidateRect(m_hwnd, nullptr, FALSE); }
 
     LRESULT on_create()
     {
@@ -342,5 +388,7 @@ class MainWindow : public BaseWindow<MainWindow>
         return 0;
     }
 };
+
+} // end namespace games
 
 #endif // GAMES_WINDOW_HPP

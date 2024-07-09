@@ -1,49 +1,8 @@
-#include "color.hpp"
-#include "window.hpp"
+#include "canvas.hpp"
 #include <deque>
 #include <iostream>
 
 using namespace games;
-
-void line_to(RawCanvas &canvas, int x0, int y0, int x1, int y1, rgb color)
-{
-    int dx = std::abs(x1 - x0);
-    int dy = std::abs(y1 - y0);
-    int sx = x0 < x1 ? 1 : -1;
-    int sy = y0 < y1 ? 1 : -1;
-    int err = dx - dy;
-    while (true)
-    {
-        canvas.set_pixel(x0, y0, color.r, color.g, color.b);
-        if (x0 == x1 && y0 == y1)
-            break;
-        int e2 = 2 * err;
-        if (e2 > -dy)
-        {
-            err -= dy;
-            x0 += sx;
-        }
-        if (e2 < dx)
-        {
-            err += dx;
-            y0 += sy;
-        }
-    }
-}
-
-void fill_circle(RawCanvas &canvas, int x, int y, int R, rgb color)
-{
-    for (int i = -R; i <= R; ++i)
-    {
-        for (int j = -R; j <= R; ++j)
-        {
-            if (i * i + j * j <= R * R)
-            {
-                canvas.set_pixel(x + i, y + j, color.r, color.g, color.b);
-            }
-        }
-    }
-}
 
 struct DoublePendulum
 {
@@ -98,19 +57,19 @@ struct DoublePendulum
             trace.pop_front();
         }
     }
-    void draw(RawCanvas &canvas, int x, int y, double scale)
+    void draw(Canvas &canvas, int x, int y, double scale)
     {
         double R = 10;
-        int x0 = x;
-        int y0 = y;
-        int x1 = x0 + l1 * scale * std::sin(theta1);
-        int y1 = y0 + l1 * scale * std::cos(theta1);
-        int x2 = x1 + l2 * scale * std::sin(theta2);
-        int y2 = y1 + l2 * scale * std::cos(theta2);
-        line_to(canvas, x0, y0, x1, y1, rgb{255, 255, 0});
-        fill_circle(canvas, x1, y1, R * scale, color);
-        line_to(canvas, x1, y1, x2, y2, rgb{255, 255, 0});
-        fill_circle(canvas, x2, y2, R * scale, color);
+        float x0 = x;
+        float y0 = y;
+        float x1 = x0 + l1 * scale * std::sin(theta1);
+        float y1 = y0 + l1 * scale * std::cos(theta1);
+        float x2 = x1 + l2 * scale * std::sin(theta2);
+        float y2 = y1 + l2 * scale * std::cos(theta2);
+        canvas.draw(geo2d::line(x0, y0, x1, y1), 1, rgb{255, 255, 0});
+        canvas.draw(geo2d::line(x1, y1, x2, y2), 1, rgb{255, 255, 0});
+        canvas.fill(geo2d::circle(x1, y1, R * scale), color);
+        canvas.fill(geo2d::circle(x2, y2, R * scale), color);
         for (auto &p : trace)
         {
             int x1 = x0 + l1 * scale * std::sin(p.first);
@@ -121,19 +80,19 @@ struct DoublePendulum
             c.r = c.r * 0.7;
             c.g = c.g * 0.7;
             c.b = c.b * 0.7;
-            fill_circle(canvas, x2, y2, R * scale * 0.3, c);
+            canvas.fill(geo2d::circle(x2, y2, R * scale * 0.3), c);
         }
     }
 };
 
-int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow)
+int main()
 {
     Application app;
     const int width = 800;
     const int height = 600;
-    RawCanvas canvas(width, height);
+    Canvas canvas(width, height);
     auto size_policy = SizePolicy::ratio(double(width) / height);
-    MainWindow win(size_policy, canvas, 60);
+    MainWindow win(size_policy, canvas.get_raw_canvas(), 60);
     if (!win.init(L"Hello world!", width, height))
     {
         return 0;
@@ -152,9 +111,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow)
             static int count = 0;
             while (true)
             {
-                std::this_thread::sleep_for(std::chrono::milliseconds(10));
                 canvas.beginpaint();
-                canvas.fill(128, 128, 128);
+                canvas.fill(rgb{128, 128, 128});
                 p1.step();
                 p2.step();
                 p3.step();
@@ -169,7 +127,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, PWSTR, int nCmdShow)
             }
         });
 
-    win.show(nCmdShow);
+    win.show();
     app.exec();
     return 0;
 }
